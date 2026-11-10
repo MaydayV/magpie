@@ -1477,13 +1477,15 @@ const cacheVersion = 29
 // (gemini-4-argon-d) is its model's (GeminiDeployment), not -n alone.
 // antigravity 2: a conversation's folder is its summary row's workspace
 // (a parse kept from before has none, under the same row revision).
+// antigravity 3: a side question's (btw's) copied parent steps in
+// parent_references are the parent's (#5803).
 // dsh 3: the ids of its newest turn's messages (TurnConvs), which a
 // request still answering carried and has no reply id for yet.
 // agy 1: a step's tokens are counted under the model its conversation's
 // database names (agyStepModels), not "agy".
 // pi 1, raft 1, cindy 1: a pi-subagents tool result's model work is its
 // subagents', counted from their own files (piSubagentsRead).
-var parseVersions = map[string]int{"codex": 3, "zcode": 1, "dsh": 3, "antigravity": 2, "agy": 1, "pi": 1, "raft": 1, "cindy": 1}
+var parseVersions = map[string]int{"codex": 3, "zcode": 1, "dsh": 3, "antigravity": 3, "agy": 1, "pi": 1, "raft": 1, "cindy": 1}
 
 type cacheFile struct {
 	Version int    `json:"version"`

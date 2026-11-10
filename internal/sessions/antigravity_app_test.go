@@ -298,7 +298,7 @@ func TestAntigravityAppFolder(t *testing.T) {
 // no folder under the same row, so the cache doesn't keep it.
 func TestAntigravityAppParseBeforeFolderReadAgain(t *testing.T) {
 	var b bytes.Buffer
-	c := cacheFile{Version: cacheVersion, Zone: "z", Parsers: map[string]int{"antigravity": 1}, Files: map[string]*state{"/a.db": {Agent: "antigravity", Size: 1}}}
+	c := cacheFile{Version: cacheVersion, Zone: "z", Parsers: map[string]int{"antigravity": 2}, Files: map[string]*state{"/a.db": {Agent: "antigravity", Size: 1}}}
 	if err := encodeCache(&b, c); err != nil {
 		t.Fatal(err)
 	}
@@ -307,6 +307,107 @@ func TestAntigravityAppParseBeforeFolderReadAgain(t *testing.T) {
 		t.Fatal("refused")
 	}
 	if _, kept := files["/a.db"]; kept {
-		t.Fatal("a parse from before the folder was read is kept")
+		t.Fatal("a parse from before the side-question fix is kept")
+	}
+}
+
+// #5803 (MaydayV): a side question (btw) makes a new conversations/<id>.db,
+// copies its parent conversation's steps up to the fork step named in
+// parent_references (field 2, with the parent conversation's id in field 6),
+// and appends its own steps after that. A parent_references row naming the
+// conversation's own id is an internal trajectory rotation and skips nothing.
+func TestAntigravityAppSideQuestionCountsOnlyItsOwnSteps(t *testing.T) {
+	claude, _ := setup(t)
+	home := filepath.Join(filepath.Dir(claude), "home")
+	const (
+		parentID = "5e1e111b-491d-4229-b11f-86f2744ff779"
+		sideID   = "b96e43aa-eaba-42fa-bb98-bc7ac77f2a70"
+	)
+	parentPath := antigravityFixture(t, home, parentID)
+	sidePath := antigravityFixture(t, home, sideID)
+
+	// Real rows from MaydayV's 5e1e111b-491d-4229-b11f-86f2744ff779.db and
+	// b96e43aa-eaba-42fa-bb98-bc7ac77f2a70.db on #5803.
+	refStep30, _ := hex.DecodeString("0a2432343133333331612d323735362d343832622d386538362d333339333163303866383364101e1804200f2802322435653165313131622d343931642d343232392d623131662d383666323734346666373739")
+	refStep1458, _ := hex.DecodeString("0a2436663863303961382d646562612d343739642d613061652d33376539346230366431393210b20b180420112802322435653165313131622d343931642d343232392d623131662d383666323734346666373739")
+	refFork10459, _ := hex.DecodeString("0a2464333264383534342d366334392d343761352d613961382d31376437666533363831333310db511804200f2802322435653165313131622d343931642d343232392d623131662d383666323734346666373739")
+	// 5aa41f4e's row 0: field 2 is -1 (uint64 max varint) before a positive fork step.
+	refMinusOne, _ := hex.DecodeString("0a2433623933366462382d333233312d343238642d386662302d39323632323732663439366610ffffffffffffffffff011804322435653165313131622d343931642d343232392d623131662d383666323734346666373739")
+	step10457, _ := hex.DecodeString("0a0c08cad7c6d70610b8999484011802320c08d4d7c6d70610908988ff013a0c08d4d7c6d70610e0e0a6ea02420c08d4d7c6d70610e0e0a6ea024a7a08890b10ad1418f20128a3cd0630183a28626f742d61383663653666332d653439392d343239322d383965642d64316338623031356566326542210a0973657373696f6e494412142d33373530373633303334333632383935353739488701506b5a177936767861764b7944636d477a3749507371324630416358890b622433323963353562642d323766332d346565322d626438342d393539346134393162366239a201520a2464333264383534342d366334392d343761352d613961382d31376437666533363831333310d95118e026222435653165313131622d343931642d343232392d623131662d383666323734346666373739d201240a100808120c08d4d7c6d70610e8b68bff010a100803120c08d4d7c6d70610d08fa7ea0282020c08d4d7c6d70610e0e0a6ea029a02206538343935343366323837353431373439656134623339636539353463653137")
+	step10459, _ := hex.DecodeString("0a0b08e6d7c6d70610b0f8d8191802320c08f1d7c6d7061080e7b9a10258890b622433323963353562642d323766332d346565322d626438342d393539346134393162366239a201520a2464333264383534342d366334392d343761352d613961382d31376437666533363831333310db5118e126222435653165313131622d343931642d343232392d623131662d383666323734346666373739d201120a100808120c08f1d7c6d70610e0b8bea1029a02203366326466336363323434303439303038306232336237326235653962333838")
+	step10462, _ := hex.DecodeString("0a0c08f2d7c6d70610a096cd8b021802320c08fcd7c6d70610e0baf99b023a0c08fcd7c6d70610d0e9c8d502420c08fcd7c6d70610d0e9c8d5024a7708890b10dde90618dc0130183a28626f742d34626637616237632d313766362d346333662d626362392d38643733636566626630313542210a0973657373696f6e494412142d3337353037363330333433363238393535373948860150565a1738367678617265384c4c667971747350794e446c75413858890b622433343935366232302d623130362d343538312d626136362d663334353661343739663661a201520a2465623362313336632d343030312d343636342d383632642d30393930363335336233643910de5118e126222462393665343361612d656162612d343266612d626239382d626337616337376632613730d201240a100808120c08fcd7c6d706109099ff9b020a100803120c08fcd7c6d70610f088c9d50282020c08fcd7c6d70610d0e9c8d5029a02206135333934666331313136383466623638613063653535373733353165353138")
+	step10464, _ := hex.DecodeString("0a0c08fcd7c6d70610a8a887f8021802320c0885d8c6d70610c8b3b3b7013a0c0885d8c6d70610e0899dd001420c0885d8c6d70610e0899dd0014a7908890b10c41818890128dcd90630183a28626f742d31393462353936332d303064312d343661612d613838302d63633833646433663431646342210a0973657373696f6e494412142d33373530373633303334333632383935353739483350565a175f617678617358664b3554707a37495076377a7a2d416b58890b622433343935366232302d623130362d343538312d626136362d663334353661343739663661a201520a2465623362313336632d343030312d343636342d383632642d30393930363335336233643910e05118e226222462393665343361612d656162612d343266612d626239382d626337616337376632613730d201240a100808120c0885d8c6d70610b8d6b7b7010a100803120c0885d8c6d70610d0b89dd00182020c0885d8c6d70610e0899dd0019a02206639306138323531363334633435363639386235343439623265313261636331")
+	genArgon, _ := hex.DecodeString("0a119a010e67656d696e692d342d6172676f6e")
+
+	// Parent conversation has internal trajectory rotations (field 6 == parentID)
+	// and step 10457 after them; both before and after step 30/1458 are its own.
+	parentDB, err := sql.Open("sqlite", parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parentDB.Close()
+	for idx, ref := range [][]byte{refStep30, refStep1458} {
+		if _, err := parentDB.Exec("INSERT INTO parent_references (idx, data) VALUES (?, ?)", idx, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := parentDB.Exec("INSERT INTO steps (idx, step_type, metadata) VALUES (10457, 15, ?)", step10457); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parentDB.Exec("INSERT INTO gen_metadata (idx, data, size) VALUES (4960, ?, ?)", genArgon, len(genArgon)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Side question copies the parent's steps (0..11 and 10457..10459) and
+	// parent_references, records the fork at 10459 from parentID, and adds its
+	// own calls at 10462 and 10464.
+	sideDB, err := sql.Open("sqlite", sidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sideDB.Close()
+	for idx, ref := range [][]byte{refMinusOne, refStep30, refStep1458, refFork10459} {
+		if _, err := sideDB.Exec("INSERT INTO parent_references (idx, data) VALUES (?, ?)", idx, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for idx, step := range map[int][]byte{10457: step10457, 10459: step10459, 10462: step10462, 10464: step10464} {
+		if _, err := sideDB.Exec("INSERT INTO steps (idx, step_type, metadata) VALUES (?, 15, ?)", idx, step); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, genIdx := range []int{4960, 4961, 4962} {
+		if _, err := sideDB.Exec("INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, ?)", genIdx, genArgon, len(genArgon)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var parentCalls, sideCalls []Call
+	for _, c := range Calls(time.Time{}) {
+		switch c.Session {
+		case parentID:
+			parentCalls = append(parentCalls, c)
+		case sideID:
+			sideCalls = append(sideCalls, c)
+		}
+	}
+	if len(parentCalls) != 5 {
+		t.Fatalf("parent calls: %d, want all 5 across its own trajectory rotations: %+v", len(parentCalls), parentCalls)
+	}
+	slices.SortFunc(sideCalls, func(a, b Call) int { return a.Time.Compare(b.Time) })
+	if len(sideCalls) != 2 {
+		t.Fatalf("side-question calls: %d, want only its 2 own steps after fork step 10459: %+v", len(sideCalls), sideCalls)
+	}
+	if sideCalls[0].Model != "gemini-4-argon" || sideCalls[0].Tokens != (Tokens{Input: 111837, Output: 220}) ||
+		sideCalls[1].Model != "gemini-4-argon" || sideCalls[1].Tokens != (Tokens{Input: 3140, Output: 137, CacheRead: 109788}) {
+		t.Fatalf("side-question calls: %+v", sideCalls)
+	}
+
+	ss := List(0)
+	if s := find(t, ss, "antigravity", parentID); s.Tokens != (Tokens{Input: 13317 + 14184 + 15531 + 4254 + 2605, Output: 621 + 164 + 194 + 276 + 242, CacheRead: 18561 + 108195}) {
+		t.Errorf("parent session tokens: %+v", s.Tokens)
+	}
+	if s := find(t, ss, "antigravity", sideID); s.Tokens != (Tokens{Input: 111837 + 3140, Output: 220 + 137, CacheRead: 109788}) {
+		t.Errorf("side-question session tokens: %+v, want only steps > 10459", s.Tokens)
 	}
 }

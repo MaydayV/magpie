@@ -925,14 +925,24 @@ The Antigravity desktop app's stable and Insiders stores are read by
 store. Each conversation takes its title and workspace from the
 `conversation_summaries.db` beside its own store, including later title
 updates. Model calls reuse the app's read-only SQLite/protobuf reader,
-including response folding and gateway matching. Insiders session ids
+including response folding and gateway matching. A side question (`btw`,
+`trajectory_type` 22) starts a new `conversations/<id>.db`, copies its
+parent conversation's `steps`, `gen_metadata` and `parent_references` into
+it, and records the parent conversation's id in `parent_references` field
+`6` and the last copied step's `idx` in field `2` (#5803, MaydayV: each
+`btw` in a 10,459-step conversation copied 504M tokens into a new database
+and counted them again); a conversation that rotates its own trajectory
+writes its own id in field `6`, so `antigravityRead` counts only steps
+after the highest field `2` naming another conversation. Insiders session ids
 have an `insiders-` prefix in magpie, leaving stable ids unchanged and
 keeping equal UUIDs in the two stores from sharing a session or call id.
 The files themselves are not renamed. Sessions stay read-only with no
 terminal resume command; encrypted conversation text is not read.
 Verification: `TestAntigravityInsidersSessions` covers Insiders alone,
 both stores with the same UUID, per-model tokens, call ids, summary refresh
-and turning the existing reading choice off, using #2190's real step bytes.
+and turning the existing reading choice off, using #2190's real step bytes;
+`TestAntigravityAppSideQuestionCountsOnlyItsOwnSteps` covers `btw`
+databases and internal trajectory rotations using #5803's real rows.
 
 A read of every call decodes each file's cached shard, and over a long
 history that is tens of thousands of files (#2278: 68k shards, 415 MB).

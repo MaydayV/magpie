@@ -25,8 +25,10 @@ import (
 // here are not. As Antigravity 2.23.0 on macOS writes them (yygutn's real
 // rows on #2190; the app isn't installed on any machine magpie is tried on):
 //
-//	steps         idx, metadata BLOB, …: one row a step
-//	gen_metadata  idx, data BLOB, …: one row a generator (a model's call)
+//	steps              idx, metadata BLOB, …: one row a step
+//	gen_metadata       idx, data BLOB, …: one row a generator (a model's call)
+//	parent_references  idx, data BLOB: a trajectory's prior step (2) and
+//	                   conversation (6)
 //
 // steps.metadata is a plain protobuf message:
 //
@@ -47,6 +49,15 @@ import (
 // gateway's to count, matched to the gateway's record by its tokens and
 // time as an agy step is (usage's agyGateway: the app sends no session
 // header).
+//
+// A side question (btw, trajectory_type 22) starts a new conversations/<id>.db,
+// copies its parent conversation's steps, gen_metadata and parent_references
+// into it, and writes a parent_references row naming the parent conversation
+// in field 6 and the last copied step's idx in field 2 (#5803, MaydayV: each
+// btw in a 10,459-step conversation copied 504M tokens into a new database
+// and counted them again). A conversation that rotates its own trajectory
+// writes its own id in field 6; only steps after the highest field 2 naming
+// another conversation are this conversation's own.
 //
 // What the app calls a conversation is its row of
 // conversation_summaries.db beside conversations/, the database agy keeps
@@ -152,8 +163,9 @@ var errAgApp = errors.New("antigravity: unreadable metadata")
 
 // antigravityRead reads a conversation's calls, in one read transaction so
 // a step and its generator come from one snapshot while the app writes on.
-// A call whose response id came before is the later step of that response,
-// and replaces it.
+// Steps copied from a parent conversation (up to parent_references' fork
+// step for another conversation id) are left to the parent; a call whose
+// response id came before is the later step of that response, and replaces it.
 func antigravityRead(path string) ([]agAppCall, error) {
 	db, done, err := openAppStore(path)
 	if err != nil {
@@ -165,6 +177,19 @@ func antigravityRead(path string) ([]agAppCall, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
+	id := strings.TrimSuffix(filepath.Base(path), ".db")
+	forkStep := int64(-1)
+	if rows, err := tx.Query("SELECT data FROM parent_references WHERE data IS NOT NULL"); err == nil {
+		for rows.Next() {
+			var b []byte
+			if rows.Scan(&b) == nil {
+				if step, parent := agAppParentRef(b); parent != "" && parent != id && step > forkStep {
+					forkStep = step
+				}
+			}
+		}
+		rows.Close()
+	}
 	models := map[int64]string{}
 	if rows, err := tx.Query("SELECT idx, data FROM gen_metadata WHERE data IS NOT NULL"); err == nil {
 		for rows.Next() {
@@ -178,7 +203,7 @@ func antigravityRead(path string) ([]agAppCall, error) {
 		}
 		rows.Close()
 	}
-	rows, err := tx.Query("SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx")
+	rows, err := tx.Query("SELECT idx, metadata FROM steps WHERE idx > ? AND metadata IS NOT NULL ORDER BY idx", forkStep)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +275,22 @@ func agAppStep(b []byte) (c agAppCall, gen int64, ok bool) {
 		return c, 0, false
 	}
 	return c, gen, true
+}
+
+// agAppParentRef is the step index up to which a parent_references row
+// copied its parent conversation, and that parent's id.
+func agAppParentRef(b []byte) (step int64, parent string) {
+	if pbWalk(b, func(num int, v uint64, d []byte) {
+		switch {
+		case num == 2 && d == nil:
+			step = int64(v)
+		case num == 6 && d != nil:
+			parent = strings.TrimSpace(string(d))
+		}
+	}) != nil {
+		return -1, ""
+	}
+	return step, parent
 }
 
 // agAppModel is the model a generator's message names: its field 19, else
